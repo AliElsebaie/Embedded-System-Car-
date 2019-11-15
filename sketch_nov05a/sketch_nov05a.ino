@@ -1,8 +1,9 @@
 #include <Arduino_FreeRTOS.h>
-#include <croutine.h>
-#include <event_groups.h>
 #include <FreeRTOSConfig.h>
 #include <FreeRTOSVariant.h>
+#include <dht.h>
+#include <Adafruit_GFX.h>    
+#include <MCUFRIEND_kbv.h>
 #include <list.h>
 #include <mpu_wrappers.h>
 #include <portable.h>
@@ -10,35 +11,63 @@
 #include <projdefs.h>
 #include <queue.h>
 #include <semphr.h>
-#include <StackMacros.h>
+#include <SPI.h>
+#include <MFRC522.h>
+
+
+ 
+
+//#include <StackMacros.h>
 #include <task.h>
 #include <timers.h>
-#include <dht.h>
-#include "Adafruit_GFX.h"
-#include "MCUFRIEND_kbv.h" 
+#include <croutine.h>
+#include <event_groups.h>
+
+#define LCD_CS A3 
+#define LCD_CD A2 
+#define LCD_WR A1 
+#define LCD_RD A0 
+#define LCD_RESET A4 
+
+#define BLACK   0x0000
+#define BLUE    0x001F
+#define RED     0xF800
+#define GREEN   0x07E0
+#define CYAN    0x07FF
+#define MAGENTA 0xF81F
+#define YELLOW  0xFFE0
+#define WHITE   0xFFFF
 
 
 
-const int headLight1=50;
-const int headLight2=51;
+MCUFRIEND_kbv tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 
 
-const int lightSensor = A2;
+int SS_PIN = 53;
+int RST_PIN = 49;
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+
+const int headLight1=40;
+const int headLight2=41;
+
+
+const int lightSensor = A5;
 
 
 //temperature and humidity sensor 
 dht DHT;
-int tempSensor= 52;
+int tempSensor= 42;
 float hum;  //Stores humidity value
 float temp; //Stores temperature value
 
 //motors
-int motorR1=31;
-int motorR2=33;
-int motorL1=30;
-int motorL2=32;
-int speedR=3;
-int speedL=2;
+int motorR1=33;
+int motorR2=31;
+int motorL1=32;
+int motorL2=30;
+int speedR=11;
+int speedL=10;
 
 //ultrasonic sensor
 const int trigPin = 35;
@@ -49,12 +78,13 @@ int distance;
 
 //joystick pins
 //const int SW_pin = 2; // digital pin connected to switch output
-const int X_pin = A0; // analog pin connected to X output
-const int Y_pin = A1; // analog pin connected to Y output
+const int X_pin = A6; // analog pin connected to X output
+const int Y_pin = A7; // analog pin connected to Y output
 
 
-int brakeLight=53;
+int brakeLight=43;
 
+bool start = false;
 
 void setup() {
   // put your setup code here, to run once:
@@ -69,14 +99,51 @@ void setup() {
   pinMode(brakeLight,OUTPUT);
   pinMode(headLight1,OUTPUT);
   pinMode(headLight2,OUTPUT);
+
+// LCD TFT ::::
+  tft.reset();
+  tft.begin(0x9481);
+  tft.setRotation(1);
+  tft.fillScreen(RED);
+//  tft.fillScreen(GREEN);
+//  tft.fillScreen(BLUE);
+//  tft.fillScreen(BLACK);
+  
+
+//  tft.setCursor(135,215);
+//  tft.setTextColor(WHITE);
+//  tft.setTextSize(4);
+//  tft.print("Subscribe");
+
+  tft.drawRect(0,0,480,320,WHITE);
+  delay(1000);
+
+  SPI.begin();      // Initiate  SPI bus
+  mfrc522.PCD_Init();   // Initiate MFRC522
+  Serial.println("Approximate your card to the reader...");
+  Serial.println();
+    delay(1000);
+//  Serial.begin(9600);   // Initiate a serial communication
+//  SPI.begin();      // Initiate  SPI bus
+//  mfrc522.PCD_Init();   // Initiate MFRC522
+//  Serial.println("Approximate your card to the reader...");
+//  Serial.println();
+  
   //pinMode(SW_pin, INPUT);
   //digitalWrite(SW_pin, HIGH);
+
+ 
   
-  xTaskCreate(control,"Drive",100,NULL,3,NULL);
-  //xTaskCreate(dashboard,"dashboard",100,NULL,1,NULL);
-  xTaskCreate(headLights,"headLights",100,NULL,2,NULL);
+     xTaskCreate(startEng,"startEngine",600,NULL,1,NULL);
+     
+     xTaskCreate(control,"Drive",100,NULL,4,NULL);
+     xTaskCreate(headLights,"headLights",100,NULL,3,NULL);
+     xTaskCreate(dashboard,"dashboard",300,NULL,2,NULL);
+  
  
 }
+
+
 
 void loop() {
 //    int chk = DHT.read11(tempSensor);
@@ -96,7 +163,17 @@ void loop() {
 //      AnalogValue = analogRead(lightSensor);
 //      Serial.println(AnalogValue);
 
-      
+ // LCD :::
+//  tft.fillRect(80,200,321,60,BLACK);
+//  delay(1000);
+//  tft.fillRect(80,200,321,60,RED);
+//  tft.setCursor(135,215);
+//  tft.setTextColor(WHITE);
+//  tft.setTextSize(4);
+//  tft.print("Subscribe");
+//  delay(1000);
+
+ 
 
 }
 
@@ -133,11 +210,91 @@ void move(int x,int y){
       
 }
 
+void startEng(void *pvParameters){
+      TickType_t xLast = xTaskGetTickCount();
+  while(1){
+    if ( ! mfrc522.PICC_IsNewCardPresent()) 
+  {
+  }
+  // Select one of the cards
+  if ( ! mfrc522.PICC_ReadCardSerial()) 
+  {
+  }
+  if (mfrc522.uid.uidByte[0] == 39 && mfrc522.uid.uidByte[1] == 40 && mfrc522.uid.uidByte[2] == 33 && mfrc522.uid.uidByte[3] == 52) //change here the UID of the card/cards that you want to give access
+  {
+    start = true;
+    Serial.println("Authorized access");
+    Serial.println();
+    delay(1000);
+    return;
+  }
+ 
+ else   {
+    Serial.println("Access denied");
+    delay(3000);
+  }
+   Serial.print("sssss");
+  // vTaskDelayUntil(&xLast, pdMS_TO_TICKS(200));
+
+  }
+  
+}
+
+void dashboard(void *pvParameters){
+    //LCD :::
+    TickType_t xLast = xTaskGetTickCount();
+   
+      while(1){
+         if(start){
+              int chk = DHT.read11(tempSensor);
+        //Read data and store it to variables hum and temp
+        if(hum!=DHT.humidity || temp!=DHT.temperature){
+           tft.fillRect(70,95,321,50,RED);
+        }
+        hum = DHT.humidity;
+        temp= DHT.temperature;
+        //Print temp and humidity values to serial monitor
+//        Serial.print("Humidity: ");
+//        Serial.print(hum);
+//        Serial.print(" %, Temp: ");
+//        Serial.print(temp);
+//        Serial.println(" Celsius");
+        //delay(2000); //Delay 2 sec.
+        
+        //delay(1000);
+        tft.setCursor(80,100);
+        tft.setTextColor(WHITE);
+        tft.setTextSize(4);
+        tft.print(hum);
+      
+        tft.setCursor(220,100);
+        tft.setTextColor(BLACK);
+        tft.setTextSize(4);
+        tft.print(temp);
+      
+        tft.fillRect(80,200, 321, 60, RED);
+      
+        tft.fillRect(80,200,321,60,BLACK);
+       // delay(1000);
+        tft.fillRect(80,200,321,60,RED);
+        tft.setCursor(135,215);
+        tft.setTextColor(WHITE);
+        tft.setTextSize(4);
+        tft.print("Subscribe");
+       
+    }
+     vTaskDelayUntil(&xLast, pdMS_TO_TICKS(80));
+    }
+    
+}
+
 
 
 void headLights(void *pvParameters){
-   
-  while(1){
+   TickType_t xLast = xTaskGetTickCount();
+
+     while(1){
+       if(start){
     unsigned int AnalogValue;
     AnalogValue = analogRead(lightSensor);
     Serial.println(AnalogValue);
@@ -149,15 +306,20 @@ void headLights(void *pvParameters){
       digitalWrite(headLight1,LOW);
       digitalWrite(headLight2,LOW); 
     }
-    vTaskDelay(pdMS_TO_TICKS ( 100 ));
+   
   }
-  
+   vTaskDelayUntil(&xLast, pdMS_TO_TICKS(100));
+  }
+ 
 }
 
 //to control the direction P D N R
 void control(void *pvParameters){
   //Serial.println("D is running Driving");
+      TickType_t xLast = xTaskGetTickCount();
+
   while(1){ 
+     if(start){
        // Clears the trigPin
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
@@ -176,6 +338,10 @@ void control(void *pvParameters){
       brake = false;
     }
       move(analogRead(X_pin),analogRead(Y_pin));
-      vTaskDelay(pdMS_TO_TICKS ( 80 ));
+      
+    
     }
+    vTaskDelayUntil(&xLast, pdMS_TO_TICKS(150));
+}
+  
 }
